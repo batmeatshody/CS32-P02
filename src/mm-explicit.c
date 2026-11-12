@@ -85,8 +85,8 @@ struct block_t {
 static block_t *mm_heap_first = NULL;
 static block_t *mm_heap_last = NULL;
 
-/** The first block on the free list, or NULL when no block is free */
-static block_t *free_list_head = NULL;
+/** The heads of the size-segregated free lists */
+static block_t *free_list_heads[14] = {NULL};
 
 /** Rounds up `size` to the nearest multiple of `n` */
 static size_t round_up(size_t size, size_t n) {
@@ -96,6 +96,23 @@ static size_t round_up(size_t size, size_t n) {
 /** Extracts a block's size from its header */
 static size_t get_size(block_t *block) {
     return block->header & ~1;
+}
+
+static size_t get_list_index(size_t size) {
+    if (size <= 64) return 0;
+    if (size <= 128) return 1;
+    if (size <= 256) return 2;
+    if (size <= 512) return 3;
+    if (size <= 1024) return 4;
+    if (size <= 2048) return 5;
+    if (size <= 4096) return 6;
+    if (size <= 6144) return 7;
+    if (size <= 8192) return 8;
+    if (size <= 12288) return 9;
+    if (size <= 16384) return 10;
+    if (size <= 20480) return 11;
+    if (size <= 24576) return 12;
+    return 13;
 }
 
 /** Extracts a block's allocation state from its header */
@@ -135,9 +152,12 @@ static void set_header(block_t *block, size_t size, bool is_allocated) {
  * (Checkpoint 1)
  */
 static block_t *find_fit(size_t size) {
-    for (block_t *curr = free_list_head; curr != NULL; curr = curr->next) {
-        if (get_size(curr) >= size) {
-            return curr;
+    size_t first_index = get_list_index(size);
+    for (size_t i = first_index; i < sizeof(free_list_heads) / sizeof(free_list_heads[0]); i++) {
+        for (block_t *curr = free_list_heads[i]; curr != NULL; curr = curr->next) {
+            if (get_size(curr) >= size) {
+                return curr;
+            }
         }
     }
     return NULL;
@@ -154,20 +174,22 @@ static block_t *block_from_payload(void *ptr) {
 
 /** list_add - Adds a free block to the front of the free list. (Checkpoint 1) */
 static void list_add(block_t *block) {
+    size_t index = get_list_index(get_size(block));
     block->prev = NULL;
-    block->next = free_list_head;
-    if (free_list_head != NULL) {
-        free_list_head->prev = block;
+    block->next = free_list_heads[index];
+    if (free_list_heads[index] != NULL) {
+        free_list_heads[index]->prev = block;
     }
-    free_list_head = block;
+    free_list_heads[index] = block;
 }
 
 /** list_remove - Removes a block from the free list. (Checkpoint 1) */
 static void list_remove(block_t *block) {
+    size_t index = get_list_index(get_size(block));
     if (block->prev != NULL) {
         block->prev->next = block->next;
     } else {
-        free_list_head = block->next;
+        free_list_heads[index] = block->next;
     }
     if (block->next != NULL) {
         block->next->prev = block->prev;
@@ -216,7 +238,9 @@ bool mm_init(void) {
     // Initialize the heap with no blocks
     mm_heap_first = NULL;
     mm_heap_last = NULL;
-    free_list_head = NULL;
+    for (size_t i = 0; i < sizeof(free_list_heads) / sizeof(free_list_heads[0]); i++) {
+        free_list_heads[i] = NULL;
+    }
     return true;
 }
 
